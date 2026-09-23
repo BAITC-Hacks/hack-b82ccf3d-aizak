@@ -21,7 +21,7 @@ REQUEST = {
     "city": "Алматы", "category": "Ведущий", "date": "2026-10-15",
     "event_type": "свадьба", "budget": 1500000, "hours": None, "language": None,
 }
-DENSE_IDS = ["HK-44923", "HK-35215", "HK-42352"]
+DENSE_IDS = ["HK-42352", "HK-35215", "HK-27222"]
 
 
 class RealBackendTests(unittest.TestCase):
@@ -80,7 +80,7 @@ class RealBackendTests(unittest.TestCase):
     def test_real_rare_category_has_two_cards_and_provenance(self):
         app = self.app()
         result = self.submit(app, category="Флорист", budget=500000, hours=100)
-        self.assertEqual([m["id"] for m in result["matches"]], ["HK-39372", "HK-90001"])
+        self.assertEqual([m["id"] for m in result["matches"]], ["HK-90001", "HK-39372"])
         self.assertEqual(len(app.metric), 2)
         self.assertIn("2 из 3", result["message"])
         self.assertTrue(all(m["profile"]["max_hours"] is None for m in result["matches"]))
@@ -131,10 +131,11 @@ class RealBackendTests(unittest.TestCase):
         profiles = load_profiles()
         expected = get_search_service().search(REQUEST)
         expected.pop("explanation_status")
-        for match in expected["matches"]:
-            match.pop("explanation")
-            match.pop("explanation_source")
-        self.assertEqual(expected, find_contractors(REQUEST, list(reversed(profiles))))
+        actual = find_contractors(REQUEST, list(reversed(profiles)))
+        for result in (expected, actual):
+            for match in result["matches"]:
+                match.pop("explanation_source")
+        self.assertEqual(expected, actual)
 
     def test_missing_csv_has_clear_error_and_no_old_or_mock_cards(self):
         app = self.app()
@@ -159,6 +160,25 @@ class RealBackendTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
         self.assertEqual([m["id"] for m in result["matches"]], DENSE_IDS)
+
+    def test_ranked_cards_and_funnel_are_visible(self):
+        app = self.app()
+        result = self.submit(app)
+        captions = [item.value for item in app.caption]
+        for match in result["matches"]:
+            ranking = match["facts"]["ranking"]
+            self.assertIn(f"Место {ranking['rank']} · балл соответствия {ranking['score']:.4f}", captions)
+        self.assertIn("Как мы подобрали", [item.label for item in app.expander])
+        self.assertIn("ранжирование, показано: 3", [item.value for item in app.markdown])
+
+    def test_real_alternatives_are_shown_without_changing_request(self):
+        app = self.app()
+        result = self.submit(app, date="2026-10-10")
+        self.assertTrue(result["suggestions"])
+        for suggestion in result["suggestions"]:
+            self.assertIn("• " + suggestion["text"], [item.value for item in app.markdown])
+        self.assertEqual(app.session_state["last_request"]["date"], "2026-10-10")
+        self.assertEqual([m["id"] for m in result["matches"]], ["HK-27222", "HK-77838"])
 
 
 if __name__ == "__main__":

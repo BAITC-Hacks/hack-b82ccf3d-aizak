@@ -1,5 +1,6 @@
-"""Frontend boundary for Alibek's find_contractors contract v1 at 559a322."""
+"""Frontend boundary for Alibek's contract v1.2 and the batch OpenAI adapter."""
 from datetime import date
+import math
 from typing import Literal, TypedDict
 
 
@@ -15,7 +16,9 @@ class SearchRequest(TypedDict):
 
 class ExplanationFields(TypedDict, total=False):
     explanation: str
-    explanation_source: Literal["openai", "fallback"]
+    explanation_source: Literal["openai", "fallback", "ai", "template", "template_after_check"]
+    facts: dict
+    explanation_check: list[str]
 
 
 class Match(ExplanationFields):
@@ -27,6 +30,8 @@ class Match(ExplanationFields):
 
 class ExplanationStatus(TypedDict, total=False):
     explanation_status: str
+    suggestions: list[dict]
+    trace: list[dict]
 
 
 class SearchResult(ExplanationStatus):
@@ -122,7 +127,18 @@ def validate_result(raw) -> SearchResult:
         require(strings(match.get("warnings")))
         if "explanation" in match or "explanation_source" in match:
             require(isinstance(match.get("explanation"), str) and bool(match["explanation"].strip()))
-            require(match.get("explanation_source") in ("openai", "fallback"))
+            require(match.get("explanation_source") in ("openai", "fallback", "ai", "template", "template_after_check"))
+        if "facts" in match:
+            require(isinstance(match["facts"], dict) and match["facts"].get("id") == identifier)
+            ranking = match["facts"].get("ranking")
+            if ranking is not None:
+                require(isinstance(ranking, dict))
+                require(_integer(ranking.get("rank"), 1))
+                score = ranking.get("score")
+                require(type(score) in (float, int) and math.isfinite(score) and 0 <= score <= 1)
+                require(strings(ranking.get("above_next_because")))
+        if "explanation_check" in match:
+            require(strings(match["explanation_check"]))
         profile = match.get("profile")
         require(isinstance(profile, dict))
         require(profile.get("id") == identifier)
@@ -139,4 +155,25 @@ def validate_result(raw) -> SearchResult:
         seen.add(item["id"])
         require(isinstance(item.get("name"), str) and bool(item["name"].strip()))
         require(strings(item.get("reasons"), nonempty=True))
+    if "suggestions" in raw:
+        require(isinstance(raw["suggestions"], list))
+        for suggestion in raw["suggestions"]:
+            require(isinstance(suggestion, dict))
+            require(suggestion.get("type") in ("date", "budget", "city"))
+            require(isinstance(suggestion.get("text"), str) and bool(suggestion["text"].strip()))
+            value = suggestion.get("value")
+            if suggestion["type"] == "budget":
+                require(_integer(value, 1))
+            else:
+                require(isinstance(value, str) and bool(value.strip()))
+            if "available" in suggestion:
+                require(_integer(suggestion["available"], 1))
+    if "trace" in raw:
+        require(isinstance(raw["trace"], list))
+        previous = raw["funnel"]["in_city_category"]
+        for stage in raw["trace"]:
+            require(isinstance(stage, dict))
+            require(isinstance(stage.get("stage"), str) and bool(stage["stage"].strip()))
+            require(_integer(stage.get("remaining")) and stage["remaining"] <= previous)
+            previous = stage["remaining"]
     return raw

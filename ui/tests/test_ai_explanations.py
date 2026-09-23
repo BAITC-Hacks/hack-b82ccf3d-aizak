@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "ui"))
 from backend.ai_config import AIConfig
+from backend.explain import explain_fallback
 from streamlit.testing.v1 import AppTest
 
 
@@ -38,8 +39,7 @@ class AIInterfaceTests(unittest.TestCase):
     def test_ai_text_reaches_cards_once_and_does_not_change_ids(self):
         def respond(payload, config):
             candidates = json.loads(payload["input"])["candidates"]
-            texts = [{"id": c["id"], "explanation": c["facts"]["anon_name"] +
-                      ": выбранный формат есть в анкете. По календарю свободен на дату мероприятия."}
+            texts = [{"id": c["id"], "explanation": explain_fallback(c["facts"])}
                      for c in reversed(candidates)]
             return {"status": "completed", "output": [{"type": "message", "content": [
                 {"type": "output_text", "text": json.dumps({"explanations": texts}, ensure_ascii=False)}]}]}
@@ -49,7 +49,7 @@ class AIInterfaceTests(unittest.TestCase):
             self.submit(app)
             result = app.session_state["result"]
             self.assertEqual(result["explanation_status"], "openai")
-            self.assertEqual([m["id"] for m in result["matches"]], ["HK-44923", "HK-35215", "HK-42352"])
+            self.assertEqual([m["id"] for m in result["matches"]], ["HK-42352", "HK-35215", "HK-27222"])
             for match in result["matches"]:
                 self.assertIn(match["explanation"], [item.value for item in app.markdown])
             self.assertEqual([c.value for c in app.caption].count("Объяснение: OpenAI"), 3)

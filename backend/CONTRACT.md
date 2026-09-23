@@ -59,6 +59,52 @@ def get_search_service():
 - `excluded` — только кандидаты нужного города и категории; все причины, не только первая.
 - Коды причин (`REASON_TEXT` в `matching.py`): `date_outside_calendar`, `busy_date`, `over_budget`, `format_mismatch`, `hours_exceeded`, `language_mismatch`.
 
+## Объяснения (v1.1, поля добавлены, старые не менялись)
+Каждый элемент `matches` дополнительно содержит:
+- `explanation: str` — 1–2 предложения для карточки (показывать вместо/над `match_reasons`);
+- `explanation_source: "ai" | "template"` — кто написал текст;
+- `facts: dict` — проверенные факты, из которых строится объяснение (схема ниже).
+
+В `message` при полной выдаче добавлено `На ДД.ММ.ГГГГ заняты N из M.` — занятость видна на уровне запроса.
+
+## Интерфейс для AI-модуля (Азамат)
+```python
+from backend import find_contractors, load_profiles
+
+def my_explainer(facts: dict) -> str:   # вызов NVIDIA/OpenAI — на стороне AI-модуля
+    ...
+result = find_contractors(request, load_profiles(), explainer=my_explainer)
+```
+- `explainer` вызывается по разу на карточку, после фильтрации и сортировки — порядок и состав не меняет.
+- Исключение, `None` или пустая строка → шаблон `explain_fallback(facts)`, `explanation_source = "template"`.
+- Без `explainer` всё работает без сети.
+- Отдельно: `from backend.explain import build_facts, explain_fallback`.
+
+`facts`:
+```json
+{"id": "HK-…", "name": "…", "category": "Фотограф", "city": "Алматы",
+ "price": {"from_kzt": 200000, "budget_kzt": 1500000, "margin_pct": 87, "imputed": false},
+ "availability": {"date": "2026-10-15", "free": true, "busy_in_category": 3, "candidates": 8},
+ "event_format": {"requested": "свадьба", "accepted": ["свадьба", "той"]},
+ "languages": {"all": ["русский"], "requested": null},
+ "hours": {"max_hours": 8, "requested": null},
+ "description_highlights": ["дословные фрагменты description про формат/опыт/язык, ≤2, без имени"],
+ "distinctive": ["проверяемые отличия от остальных карточек этой выдачи"],
+ "provenance": {"synthetic": false, "price_imputed": false, "city_imputed": false}}
+```
+Правило для промпта: использовать только `facts`, не добавлять преимуществ, которых там нет; не упоминать `name`.
+
+## v1.2: ранжирование, подсказки, трассировка, проверка AI (поля добавлены)
+- Сигнатура: `find_contractors(request, profiles, explainer=None, similarity=None)`;
+  `similarity` — `{id: 0..1}` или `request -> {id: 0..1}` (эмбеддинги AI-модуля), ошибка → без неё.
+- **Сортировка изменена**: балл ↓, затем цена ↑, затем id ↑. Балл и компоненты — в `facts.ranking`:
+  `{"rank", "score", "components": {format_specialization, price_fit, semantic, flexibility, experience}, "above_next_because": [str]}`.
+  Веса — `backend/ranking.py::WEIGHTS`. В `match_reasons` добавлена строка «Место N: выше следующего — …».
+- `explanation_source`: `"ai"` | `"template"` | `"template_after_check"` (AI-текст отклонён проверкой);
+  `explanation_check: [str]` — замечания проверки (`backend/grounding.py`).
+- `suggestions: [{"type": "date"|"budget"|"city", "value", "available"?, "text"}]` — при <3 карточках или пустом результате.
+- `trace: [{"stage", "remaining"}]` — последовательная воронка по этапам для блока «Как мы подобрали».
+
 ## Правила фильтров
 - Город, категория, формат, язык — сравнение без учёта регистра.
 - Бюджет: `price_from_kzt <= budget`.

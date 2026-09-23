@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from catalog import CALENDAR_END, CALENDAR_START, demo_catalog
 from contracts import BackendError, ContractError, RequestError, validate_result
 from mock_data import DEMO_PROFILES, search_contractors
@@ -101,6 +102,20 @@ class ContractTests(unittest.TestCase):
         response["matches"][0]["profile"]["categories"].append("changed")
         self.assertEqual(DEMO_PROFILES, before)
 
+    def test_invalid_new_ranking_suggestions_and_trace_are_rejected(self):
+        for change in (
+            {"suggestions": [{"type": "budget", "value": -1, "text": "bad"}]},
+            {"suggestions": [{"type": "unknown", "value": "bad", "text": "bad"}]},
+            {"trace": [{"stage": "bad", "remaining": 999}]},
+        ):
+            with self.subTest(change=change), self.assertRaises(ContractError):
+                validate_result({**search_contractors(REQUEST), **change})
+        invalid = search_contractors(REQUEST)
+        match = invalid["matches"][0]
+        match["facts"] = {"id": match["id"], "ranking": {"rank": 1, "score": float("nan"), "above_next_because": []}}
+        with self.assertRaises(ContractError):
+            validate_result(invalid)
+
 
 BACKEND_CONTRACT_FILE = Path(os.environ.get("AIZAK_BACKEND_CONTRACT_FILE") or
                              Path(__file__).resolve().parents[2] / "backend" / "matching.py")
@@ -109,7 +124,7 @@ BACKEND_CONTRACT_FILE = Path(os.environ.get("AIZAK_BACKEND_CONTRACT_FILE") or
 @unittest.skipUnless(BACKEND_CONTRACT_FILE.is_file(), "Backend not present in standalone UI checkout")
 class BackendCompatibilityTests(unittest.TestCase):
     def test_mock_matches_actual_backend_structure_and_filters_offline(self):
-        spec = importlib.util.spec_from_file_location("aizak_backend_contract", BACKEND_CONTRACT_FILE)
+        spec = importlib.util.spec_from_file_location("backend.matching_contract_snapshot", BACKEND_CONTRACT_FILE)
         backend = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(backend)
         for change in (
@@ -122,14 +137,17 @@ class BackendCompatibilityTests(unittest.TestCase):
             with self.subTest(change=change):
                 actual = validate_result(backend.find_contractors(request, deepcopy(DEMO_PROFILES)))
                 demo = validate_result(search_contractors(request))
-                self.assertEqual(set(actual), set(demo))
+                # v1.2 adds ranking/facts/suggestions; the frontend mock keeps the v1 envelope.
+                self.assertTrue(set(demo).issubset(actual))
                 for field in ("status", "more_available", "funnel"):
                     self.assertEqual(actual[field], demo[field])
-                self.assertEqual([m["id"] for m in actual["matches"]], [m["id"] for m in demo["matches"]])
+                if actual["more_available"] == 0:
+                    self.assertEqual({m["id"] for m in actual["matches"]}, {m["id"] for m in demo["matches"]})
                 self.assertEqual({e["id"]: sorted(e["reasons"]) for e in actual["excluded"]}, {e["id"]: sorted(e["reasons"]) for e in demo["excluded"]})
-                for real_match, demo_match in zip(actual["matches"], demo["matches"]):
-                    self.assertEqual(set(real_match), set(demo_match))
-                    self.assertEqual(real_match["profile"], demo_match["profile"])
+                profiles_by_id = {p["id"]: p for p in DEMO_PROFILES}
+                for real_match in actual["matches"]:
+                    self.assertTrue({"id", "profile", "match_reasons", "warnings"}.issubset(real_match))
+                    self.assertEqual(real_match["profile"], profiles_by_id[real_match["id"]])
 
 
 if __name__ == "__main__":

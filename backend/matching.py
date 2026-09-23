@@ -13,6 +13,10 @@
 """
 from datetime import date
 
+from .explain import build_facts, explain_fallback
+from .grounding import check_explanation
+from .ranking import rank_advantages, score_profile
+
 MAX_RESULTS = 3
 
 # Окно календаря занятости из кейса: вне его занятость неизвестна, свободным не считаем.
@@ -100,8 +104,77 @@ def _warnings(p: dict) -> list[str]:
     return w
 
 
-def find_contractors(request: dict, profiles: list[dict]) -> dict:
+def _explain(facts: dict, explainer) -> tuple[str, str, list[str]]:
+    """Генерация -> проверка по фактам -> резервный шаблон. Возвращает (текст, источник, замечания проверки)."""
+    if not explainer:
+        return explain_fallback(facts), "template", []
+    try:
+        text = explainer(facts)
+    except Exception as exc:
+        return explain_fallback(facts), "template", [f"AI недоступен: {type(exc).__name__}"]
+    problems = check_explanation(text, facts)
+    if problems:
+        return explain_fallback(facts), "template_after_check", problems
+    return text.strip(), "ai", []
+
+
+STAGES = (  # (название этапа, коды причин, условие применения)
+    ("свободен на дату", ("date_outside_calendar", "busy_date"), lambda r: True),
+    ("укладывается в бюджет", ("over_budget",), lambda r: True),
+    ("берёт этот формат", ("format_mismatch",), lambda r: True),
+    ("работает нужное число часов", ("hours_exceeded",), lambda r: r["hours"]),
+    ("работает на нужном языке", ("language_mismatch",), lambda r: r["language"]),
+)
+
+
+def _trace(req: dict, checked: list, shown: int) -> list[dict]:
+    """Последовательная воронка: сколько кандидатов остаётся после каждого этапа."""
+    trace = [{"stage": "город и категория", "remaining": len(checked)}]
+    applied: set[str] = set()
+    for name, codes, applies in STAGES:
+        if not applies(req):
+            continue
+        applied.update(codes)
+        trace.append({"stage": name, "remaining": sum(not applied & set(r) for _, r in checked)})
+    trace.append({"stage": "ранжирование, показано", "remaining": shown})
+    return trace
+
+
+def _suggestions(req: dict, candidates: list[dict], shown: int) -> list[dict]:
+    """Что изменить в заказе, чтобы вариантов стало больше. Только по реальным данным."""
+    out = []
+    if not CALENDAR_START <= req["date"] <= CALENDAR_END:
+        return out
+    base = date.fromisoformat(req["date"])
+    for delta in (-1, 1, -2, 2, -3, 3):
+        d = date.fromordinal(base.toordinal() + delta).isoformat()
+        if not CALENDAR_START <= d <= CALENDAR_END:
+            continue
+        n = sum(not _check(p, {**req, "date": d}) for p in candidates)
+        if n > shown:
+            out.append({"type": "date", "value": d, "available": n,
+                        "text": f"{date.fromisoformat(d).strftime('%d.%m.%Y')} подходят {n}"})
+        if sum(s["type"] == "date" for s in out) == 2:
+            break
+    only_budget = [p for p in candidates if _check(p, req) == ["over_budget"]]
+    if only_budget:
+        need = min(p["price_from_kzt"] for p in only_budget)
+        gain = sum(p["price_from_kzt"] <= need for p in only_budget)
+        out.append({"type": "budget", "value": need, "available": shown + gain,
+                    "text": f"при бюджете от {need:,} ₸ (+{need - req['budget']:,} ₸) добавится вариантов: {gain}".replace(",", " ")})
+    return out
+
+
+def find_contractors(request: dict, profiles: list[dict], explainer=None, similarity=None) -> dict:
+    """explainer: facts -> str (AI-модуль), проверяется по фактам; на порядок не влияет.
+    similarity: {id: 0..1} или функция request -> {id: 0..1} (эмбеддинги AI-модуля) — компонента ранжирования.
+    """
     req = validate_request(request)
+    if callable(similarity):
+        try:
+            similarity = similarity(req)
+        except Exception:
+            similarity = None
     city, cat = _norm(req["city"]), _norm(req["category"])
 
     in_category = [p for p in profiles if cat in {_norm(c) for c in p["categories"]}]
@@ -116,6 +189,8 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
             "status": "no_category",
             "message": f"В городе {req['city']} нет подрядчиков категории «{req['category']}».{hint}",
             "matches": [], "excluded": [], "more_available": 0, "funnel": funnel,
+            "suggestions": [{"type": "city", "value": c, "text": f"категория есть в городе {c}"} for c in other],
+            "trace": [{"stage": "город и категория", "remaining": 0}],
         }
 
     checked = [(p, _check(p, req)) for p in candidates]
@@ -126,18 +201,33 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
     funnel.update({f"rejected_{k}": v for k, v in counts.items() if v})
     funnel["passed"] = len(passed)
 
-    passed.sort(key=lambda p: (p["price_from_kzt"], p["id"]))
+    scores = {p["id"]: score_profile(p, req, similarity) for p in passed}
+    passed.sort(key=lambda p: (-scores[p["id"]][0], p["price_from_kzt"], p["id"]))
     top = passed[:MAX_RESULTS]
     busy = counts["busy_date"]
-    matches = [
-        {
+    availability = {"busy_in_category": busy, "candidates": len(candidates)}
+    matches = []
+    for i, p in enumerate(top):
+        score, components = scores[p["id"]]
+        nxt = passed[i + 1] if i + 1 < len(passed) else None
+        advantages = rank_advantages(components, scores[nxt["id"]][1] if nxt else None)
+        facts = build_facts(p, req, [q for q in top if q is not p], availability)
+        facts["ranking"] = {"rank": i + 1, "score": score, "components": components,
+                            "above_next_because": advantages}
+        explanation, source, check = _explain(facts, explainer)
+        reasons = _match_reasons(p, req, busy, len(candidates))
+        if advantages:
+            reasons.append(f"Место {i + 1}: выше следующего — {', '.join(advantages)}.")
+        matches.append({
             "id": p["id"],
             "profile": p,
-            "match_reasons": _match_reasons(p, req, busy, len(candidates)),
+            "explanation": explanation,
+            "explanation_source": source,
+            "explanation_check": check,
+            "facts": facts,
+            "match_reasons": reasons,
             "warnings": _warnings(p),
-        }
-        for p in top
-    ]
+        })
 
     why = "; ".join(f"{REASON_TEXT[k]} — {v}" for k, v in counts.items() if v)
     if not top:
@@ -151,6 +241,9 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
     else:
         status = "found"
         message = f"Подобрано {len(top)} из {len(passed)} подходящих (кандидатов в категории: {len(candidates)})."
+    if len(top) == MAX_RESULTS and busy:  # при <3 занятость уже есть в перечне причин
+        d = date.fromisoformat(req["date"]).strftime("%d.%m.%Y")
+        message += f" На {d} заняты {busy} из {len(candidates)}."
 
     return {
         "status": status,
@@ -159,4 +252,6 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
         "excluded": excluded,
         "more_available": len(passed) - len(top),
         "funnel": funnel,
+        "suggestions": _suggestions(req, candidates, len(top)) if len(top) < MAX_RESULTS else [],
+        "trace": _trace(req, checked, len(top)),
     }

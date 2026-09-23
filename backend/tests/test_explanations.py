@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from backend import find_contractors, load_profiles
 from backend.ai_config import AIConfig, load_ai_config
+from backend.explain import explain_fallback
 from backend.explanations import OPENAI_URL, _NoRedirect, _post_openai, add_explanations
 from urllib.error import HTTPError
 
@@ -21,8 +22,8 @@ REQUEST = {"city": "Алматы", "category": "Ведущий", "date": "2026-1
 
 def response_for(result):
     # Reverse API output deliberately: the UI must preserve the original ranking.
-    items = [{"id": m["id"], "explanation": f"{m['profile']['anon_name']}: подходит для свадьбы. "
-              "По календарю свободен на выбранную дату."} for m in reversed(result["matches"])]
+    items = [{"id": m["id"], "explanation": explain_fallback(m["facts"])}
+             for m in reversed(result["matches"])]
     return envelope(items)
 
 
@@ -86,10 +87,12 @@ class ExplanationTests(unittest.TestCase):
     def assert_matching_unchanged(self, enriched):
         core = deepcopy(enriched)
         core.pop("explanation_status", None)
-        for match in core["matches"]:
-            match.pop("explanation", None)
-            match.pop("explanation_source", None)
-        self.assertEqual(core, self.before)
+        expected = deepcopy(self.before)
+        for result in (core, expected):
+            for match in result["matches"]:
+                match.pop("explanation", None)
+                match.pop("explanation_source", None)
+        self.assertEqual(core, expected)
         self.assertEqual(self.result, self.before)
 
     def test_ai_success_preserves_order_and_all_matching_fields(self):
@@ -113,7 +116,9 @@ class ExplanationTests(unittest.TestCase):
         for candidate in data["candidates"]:
             self.assertNotIn("description", candidate["facts"])
             self.assertNotIn("busy_dates", candidate["facts"])
-            self.assertIn("price_imputed", candidate["facts"])
+            self.assertNotIn("name", candidate["facts"])
+            self.assertIn("price_imputed", candidate["facts"]["provenance"])
+            self.assertIn("ranking", candidate["facts"])
         self.assertFalse(payload["store"])
         self.assertTrue(payload["text"]["format"]["strict"])
         self.assertNotIn(self.config.api_key, json.dumps(payload))
@@ -130,7 +135,7 @@ class ExplanationTests(unittest.TestCase):
                 self.assert_matching_unchanged(result)
                 self.assertEqual(len({m["explanation"] for m in result["matches"]}), 3)
                 for m in result["matches"]:
-                    self.assertIn(m["profile"]["anon_name"], m["explanation"])
+                    self.assertEqual(m["explanation"], explain_fallback(m["facts"]))
                     self.assertEqual(m["explanation_source"], "fallback")
 
     def test_timeout_auth_rate_limit_and_network_errors_fall_back_once(self):
@@ -151,7 +156,8 @@ class ExplanationTests(unittest.TestCase):
         invalid_items = [items[:-1], items + items[:1], [items[0]] * 3,
                          [{**items[0], "id": "unselected"}, *items[1:]],
                          [{**items[0], "explanation": ""}, *items[1:]],
-                         [{**items[0], "explanation": "Несуществующий подрядчик выбран за рейтинг."}, *items[1:]],
+                         [{**items[0], "explanation": "Скидка 987654% и опыт 1234567 лет гарантированы."}, *items[1:]],
+                         [{**items[0], "explanation": "Из описания: «Невероятный неподтверждённый опыт»"}, *items[1:]],
                          [{**items[0], "explanation": items[0]["explanation"] + " https://bad.test"}, *items[1:]],
                          [{**items[0], "explanation": 123}, *items[1:]],
                          [{**items[0], "extra": "invented"}, *items[1:]]]
@@ -180,7 +186,8 @@ class ExplanationTests(unittest.TestCase):
         result = add_explanations(request, original, config=AIConfig())
         self.assertEqual(len(result["matches"]), 2)
         for match in result["matches"]:
-            self.assertIn("без привязки к присутствию", match["explanation"])
+            self.assertIsNone(match["facts"]["hours"]["max_hours"])
+            self.assertEqual(match["explanation"], explain_fallback(match["facts"]))
         self.assertEqual(result["matches"][1]["warnings"], original["matches"][1]["warnings"])
 
     def test_transport_uses_fixed_endpoint_timeout_and_bounded_read(self):

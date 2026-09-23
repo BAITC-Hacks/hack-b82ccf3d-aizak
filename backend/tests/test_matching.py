@@ -2,10 +2,10 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from loader import load_profiles, normalize_profile  # noqa: E402
-from matching import find_contractors  # noqa: E402
+from backend.loader import load_profiles, normalize_profile  # noqa: E402
+from backend.matching import find_contractors  # noqa: E402
 
 
 def make(pid, **kw):
