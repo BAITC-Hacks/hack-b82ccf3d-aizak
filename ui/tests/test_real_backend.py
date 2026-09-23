@@ -26,9 +26,15 @@ DENSE_IDS = ["HK-44923", "HK-35215", "HK-42352"]
 
 class RealBackendTests(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {"AIZAK_DATASET": str(DEFAULT_DATASET)})
+        environment = patch.dict(os.environ, {"AIZAK_DATASET": str(DEFAULT_DATASET), "AIZAK_AI_ENABLED": "false"})
         environment.start()
         self.addCleanup(environment.stop)
+        network = patch("backend.explanations._post_openai", side_effect=AssertionError("Network forbidden in tests"))
+        self.network = network.start()
+        self.addCleanup(network.stop)
+
+    def tearDown(self):
+        self.network.assert_not_called()
 
     def app(self):
         return AppTest.from_file(str(ROOT / "ui" / "app.py"), default_timeout=20).run()
@@ -68,7 +74,7 @@ class RealBackendTests(unittest.TestCase):
         shown_names = [item.value for item in app.subheader]
         for match in result["matches"]:
             self.assertIn(match["profile"]["anon_name"], shown_names)
-            self.assertIn(" ".join(match["match_reasons"][:2]), [item.value for item in app.markdown])
+            self.assertIn(match["explanation"], [item.value for item in app.markdown])
         self.assertNotIn("ТЕСТОВЫЙ ПРОФИЛЬ", [item.value for item in app.caption])
 
     def test_real_rare_category_has_two_cards_and_provenance(self):
@@ -124,6 +130,10 @@ class RealBackendTests(unittest.TestCase):
     def test_real_order_does_not_depend_on_input_file_order(self):
         profiles = load_profiles()
         expected = get_search_service().search(REQUEST)
+        expected.pop("explanation_status")
+        for match in expected["matches"]:
+            match.pop("explanation")
+            match.pop("explanation_source")
         self.assertEqual(expected, find_contractors(REQUEST, list(reversed(profiles))))
 
     def test_missing_csv_has_clear_error_and_no_old_or_mock_cards(self):

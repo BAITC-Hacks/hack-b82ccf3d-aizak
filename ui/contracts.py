@@ -13,14 +13,23 @@ class SearchRequest(TypedDict):
     hours: int | None
 
 
-class Match(TypedDict):
+class ExplanationFields(TypedDict, total=False):
+    explanation: str
+    explanation_source: Literal["openai", "fallback"]
+
+
+class Match(ExplanationFields):
     id: str
     profile: dict
     match_reasons: list[str]
     warnings: list[str]
 
 
-class SearchResult(TypedDict):
+class ExplanationStatus(TypedDict, total=False):
+    explanation_status: str
+
+
+class SearchResult(ExplanationStatus):
     status: Literal["found", "no_category", "none_match"]
     message: str
     matches: list[Match]
@@ -93,6 +102,9 @@ def validate_result(raw) -> SearchResult:
     require(isinstance(raw["funnel"], dict) and "in_city_category" in raw["funnel"])
     require(all(isinstance(k, str) and _integer(v) for k, v in raw["funnel"].items()))
     require((raw["status"] == "found") == bool(raw["matches"]))
+    if "explanation_status" in raw:
+        require(raw["explanation_status"] in ("openai", "disabled", "missing_key",
+                "configuration_error", "api_unavailable", "invalid_response"))
     if raw["status"] != "found":
         require(raw["more_available"] == 0)
     if raw["status"] == "no_category":
@@ -108,6 +120,9 @@ def validate_result(raw) -> SearchResult:
         seen.add(identifier)
         require(strings(match.get("match_reasons"), nonempty=True))
         require(strings(match.get("warnings")))
+        if "explanation" in match or "explanation_source" in match:
+            require(isinstance(match.get("explanation"), str) and bool(match["explanation"].strip()))
+            require(match.get("explanation_source") in ("openai", "fallback"))
         profile = match.get("profile")
         require(isinstance(profile, dict))
         require(profile.get("id") == identifier)

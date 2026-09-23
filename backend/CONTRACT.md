@@ -64,3 +64,15 @@ def get_search_service():
 - Бюджет: `price_from_kzt <= budget`.
 - Длительность: `max_hours = null` (флорист, декоратор, сувениры) — не ограничивает; иначе `max_hours >= hours`.
 - Дата вне окна календаря 23.09.2026–31.12.2026 — доступность неизвестна, подрядчик не считается свободным.
+
+## Дополнительный слой объяснений (интеграционная версия)
+
+`find_contractors` и его контракт выше не изменены. После него UI может вызвать
+`backend.explanations.add_explanations(request, result)`. Функция возвращает копию,
+добавляя только `explanation` и `explanation_source` к выбранным карточкам и
+`explanation_status` к непустому результату. ID и порядок, профили, match_reasons,
+warnings, excluded, funnel и more_available сохраняются.
+
+Провайдер OpenAI настраивается через `OPENAI_API_KEY` в окружении либо `backend/.env`.
+Пример без секретов — `backend/.env.example`. При недоступном AI остаются объяснения
+по подтверждённым полям каталога. Прямые вызовы `find_contractors` никогда не вызывают API.

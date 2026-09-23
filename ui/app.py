@@ -20,7 +20,7 @@ except BackendError as exc:
     st.title("AIZAK")
     st.error(str(exc))
     st.stop()
-result_source = ("matching-contract-v2", service.is_demo)
+result_source = ("matching-contract-v2-explanations", service.is_demo)
 if st.session_state.get("result_source") != result_source:
     for key in ("result", "last_request", "search_error"):
         st.session_state.pop(key, None)
@@ -94,6 +94,8 @@ else:
     else:
         st.success(f"Подобрано подрядчиков: {len(result['matches'])} из максимум 3.")
     st.write(result["message"])
+    if result.get("explanation_status") in ("configuration_error", "api_unavailable", "invalid_response"):
+        st.caption("AI-объяснения сейчас недоступны. Показаны объяснения по данным каталога.")
     for column, match in zip(st.columns(len(result["matches"]) or 1), result["matches"]):
         profile = match["profile"]
         with column, st.container(border=True):
@@ -105,7 +107,10 @@ else:
             st.write(f"{profile['city']} · {', '.join(profile['categories'])}")
             st.metric("Стартовая цена", "от " + format_kzt(profile["price_from_kzt"]))
             st.markdown("**Почему подходит**")
-            st.write(" ".join(match["match_reasons"][:2]))
+            st.write(match.get("explanation") or " ".join(match["match_reasons"][:2]))
+            if match.get("explanation_source"):
+                st.caption("Объяснение: OpenAI" if match["explanation_source"] == "openai"
+                           else "Объяснение по данным каталога")
             if len(match["match_reasons"]) > 2:
                 with st.expander("Все причины соответствия"):
                     for reason in match["match_reasons"]:
