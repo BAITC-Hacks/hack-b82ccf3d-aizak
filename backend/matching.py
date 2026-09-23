@@ -15,7 +15,11 @@ from datetime import date
 
 MAX_RESULTS = 3
 
+# Окно календаря занятости из кейса: вне его занятость неизвестна, свободным не считаем.
+CALENDAR_START, CALENDAR_END = "2026-09-23", "2026-12-31"
+
 REASON_TEXT = {
+    "date_outside_calendar": "дата вне календаря занятости (23.09.2026–31.12.2026), доступность неизвестна",
     "busy_date": "занят на эту дату",
     "over_budget": "цена выше бюджета",
     "format_mismatch": "не берёт этот формат мероприятия",
@@ -51,7 +55,9 @@ def validate_request(request: dict) -> dict:
 def _check(p: dict, req: dict) -> list[str]:
     """Возвращает коды причин, по которым профиль не подходит (пусто — подходит)."""
     reasons = []
-    if req["date"] in p["busy_dates"]:
+    if not CALENDAR_START <= req["date"] <= CALENDAR_END:
+        reasons.append("date_outside_calendar")
+    elif req["date"] in p["busy_dates"]:
         reasons.append("busy_date")
     if p["price_from_kzt"] > req["budget"]:
         reasons.append("over_budget")
@@ -140,7 +146,8 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
                    f"но ни один не проходит по условиям: {why}.")
     elif len(top) < MAX_RESULTS:
         status = "found"
-        message = f"Подобрано {len(top)} из {MAX_RESULTS}: всего кандидатов {len(candidates)}, остальные отсеяны ({why})."
+        message = f"Подобрано {len(top)} из {MAX_RESULTS}: в городе {req['city']} всего {len(candidates)} подрядчик(ов) категории «{req['category']}»"
+        message += f", остальные отсеяны ({why})." if why else "."
     else:
         status = "found"
         message = f"Подобрано {len(top)} из {len(passed)} подходящих (кандидатов в категории: {len(candidates)})."

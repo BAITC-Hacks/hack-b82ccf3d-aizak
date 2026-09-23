@@ -56,11 +56,43 @@ class MatchingTest(unittest.TestCase):
         reasons = {e["id"]: e["reasons"] for e in res["excluded"]}
         self.assertEqual(reasons, {"BUSY": ["busy_date"], "EXP": ["over_budget"], "FMT": ["format_mismatch"]})
         self.assertIn("1 из 3", res["message"])
+        few = find_contractors(REQ, [make("ONLY")])
+        self.assertTrue(few["message"].endswith("категории «Фотограф»."))
 
     def test_three_outcomes_distinguishable(self):
         profiles = [make("P", busy_dates="2026-11-15")]
         self.assertEqual(find_contractors(REQ, profiles)["status"], "none_match")
         self.assertEqual(find_contractors({**REQ, "category": "Флорист"}, profiles)["status"], "no_category")
+
+    def test_budget_boundary_inclusive(self):
+        profiles = [make("EQ", price_from_kzt="500000"), make("OVER", price_from_kzt="500001")]
+        res = find_contractors(REQ, profiles)
+        self.assertEqual([m["id"] for m in res["matches"]], ["EQ"])
+        self.assertEqual(res["excluded"][0]["reasons"], ["over_budget"])
+
+    def test_hours_and_null_max_hours(self):
+        profiles = [make("SHORT", max_hours="4"), make("LONG", max_hours="10"), make("NULL", max_hours="")]
+        res = find_contractors({**REQ, "hours": 6}, profiles)
+        self.assertEqual(sorted(m["id"] for m in res["matches"]), ["LONG", "NULL"])
+        self.assertEqual(res["excluded"], [{"id": "SHORT", "name": "Имя SHORT", "reasons": ["hours_exceeded"]}])
+
+    def test_language_filter(self):
+        profiles = [make("RU", languages="русский"), make("KZ")]
+        res = find_contractors({**REQ, "language": "казахский"}, profiles)
+        self.assertEqual([m["id"] for m in res["matches"]], ["KZ"])
+
+    def test_date_outside_calendar_not_free(self):
+        res = find_contractors({**REQ, "date": "2027-01-15"}, [make("A"), make("B")])
+        self.assertEqual(res["status"], "none_match")
+        self.assertEqual(res["matches"], [])
+        self.assertTrue(all(e["reasons"] == ["date_outside_calendar"] for e in res["excluded"]))
+        self.assertIn("вне календаря", res["message"])
+
+    def test_empty_result_explained(self):
+        res = find_contractors({**REQ, "budget": 1000}, [make("A"), make("B", busy_dates="2026-11-15")])
+        self.assertEqual(res["status"], "none_match")
+        self.assertIn("цена выше бюджета — 2", res["message"])
+        self.assertIn("занят на эту дату — 1", res["message"])
 
     def test_real_dataset_date_changes_result(self):
         profiles = load_profiles()
