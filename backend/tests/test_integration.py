@@ -32,14 +32,16 @@ class IntegrationTest(unittest.TestCase):
         cls.profiles = load_profiles()
 
     def assert_contract(self, res):
-        self.assertEqual(set(res), {"status", "message", "matches", "excluded", "more_available", "funnel"})
+        self.assertLessEqual({"status", "message", "matches", "excluded", "more_available", "funnel",
+                              "suggestions", "trace"}, set(res))
         self.assertTrue(res["message"].strip())
         self.assertLessEqual(len(res["matches"]), 3)
         self.assertEqual(res["status"] == "found", bool(res["matches"]))
         ids = [m["id"] for m in res["matches"]] + [e["id"] for e in res["excluded"]]
         self.assertEqual(len(ids), len(set(ids)))
-        prices = [(m["profile"]["price_from_kzt"], m["id"]) for m in res["matches"]]
-        self.assertEqual(prices, sorted(prices))
+        order = [(-m["facts"]["ranking"]["score"], m["profile"]["price_from_kzt"], m["id"]) for m in res["matches"]]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual([m["facts"]["ranking"]["rank"] for m in res["matches"]], list(range(1, len(res["matches"]) + 1)))
         for m in res["matches"]:
             self.assertEqual(m["profile"]["id"], m["id"])
             self.assertTrue(m["match_reasons"] and all(isinstance(r, str) for r in m["match_reasons"]))

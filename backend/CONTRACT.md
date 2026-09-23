@@ -94,6 +94,17 @@ result = find_contractors(request, load_profiles(), explainer=my_explainer)
 ```
 Правило для промпта: использовать только `facts`, не добавлять преимуществ, которых там нет; не упоминать `name`.
 
+## v1.2: ранжирование, подсказки, трассировка, проверка AI (поля добавлены)
+- Сигнатура: `find_contractors(request, profiles, explainer=None, similarity=None)`;
+  `similarity` — `{id: 0..1}` или `request -> {id: 0..1}` (эмбеддинги AI-модуля), ошибка → без неё.
+- **Сортировка изменена**: балл ↓, затем цена ↑, затем id ↑. Балл и компоненты — в `facts.ranking`:
+  `{"rank", "score", "components": {format_specialization, price_fit, semantic, flexibility, experience}, "above_next_because": [str]}`.
+  Веса — `backend/ranking.py::WEIGHTS`. В `match_reasons` добавлена строка «Место N: выше следующего — …».
+- `explanation_source`: `"ai"` | `"template"` | `"template_after_check"` (AI-текст отклонён проверкой);
+  `explanation_check: [str]` — замечания проверки (`backend/grounding.py`).
+- `suggestions: [{"type": "date"|"budget"|"city", "value", "available"?, "text"}]` — при <3 карточках или пустом результате.
+- `trace: [{"stage", "remaining"}]` — последовательная воронка по этапам для блока «Как мы подобрали».
+
 ## Правила фильтров
 - Город, категория, формат, язык — сравнение без учёта регистра.
 - Бюджет: `price_from_kzt <= budget`.

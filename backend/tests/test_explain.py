@@ -51,8 +51,10 @@ class ExplainTest(unittest.TestCase):
 
     def test_distinctive_facts_are_true(self):
         m = find_contractors(DENSE, self.profiles)["matches"]
-        cheapest = min(m, key=lambda x: x["profile"]["price_from_kzt"])
-        self.assertTrue(any("самый низкий старт" in d for d in cheapest["facts"]["distinctive"]))
+        prices = sorted(x["profile"]["price_from_kzt"] for x in m)
+        for x in m:  # «самый низкий старт» — только при строго минимальной цене
+            flagged = any("самый низкий старт" in d for d in x["facts"]["distinctive"])
+            self.assertEqual(flagged, x["profile"]["price_from_kzt"] == prices[0] < prices[1])
         for x in m:
             others = [o for o in m if o is not x]
             for d in x["facts"]["distinctive"]:

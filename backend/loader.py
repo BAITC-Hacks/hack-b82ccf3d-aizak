@@ -33,7 +33,9 @@ def _to_bool(value):
 def normalize_profile(raw: dict, line_no: int | None = None) -> dict:
     """Приводит сырую запись к типизированному профилю. Бросает ValueError при ошибке."""
     where = f"строка {line_no}" if line_no else f"id={raw.get('id')}"
-    missing = [f for f in REQUIRED_FIELDS if raw.get(f) in (None, "")]
+    # busy_dates может быть пустым (свободен весь период), но поле должно присутствовать
+    missing = [f for f in REQUIRED_FIELDS
+               if f not in raw or (raw[f] in (None, "") and f != "busy_dates")]
     if missing:
         raise ValueError(f"{where}: нет обязательных полей {missing}")
 
