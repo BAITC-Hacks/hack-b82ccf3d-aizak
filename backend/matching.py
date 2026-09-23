@@ -13,6 +13,8 @@
 """
 from datetime import date
 
+from .explain import build_facts, explain_fallback
+
 MAX_RESULTS = 3
 
 # Окно календаря занятости из кейса: вне его занятость неизвестна, свободным не считаем.
@@ -100,7 +102,20 @@ def _warnings(p: dict) -> list[str]:
     return w
 
 
-def find_contractors(request: dict, profiles: list[dict]) -> dict:
+def _explain(facts: dict, explainer) -> tuple[str, str]:
+    """AI-объяснение, если explainer задан и отработал; иначе шаблон из тех же фактов."""
+    if explainer:
+        try:
+            text = explainer(facts)
+            if isinstance(text, str) and text.strip():
+                return text.strip(), "ai"
+        except Exception:
+            pass
+    return explain_fallback(facts), "template"
+
+
+def find_contractors(request: dict, profiles: list[dict], explainer=None) -> dict:
+    """explainer: необязательная функция facts -> str (AI-модуль). На порядок карточек не влияет."""
     req = validate_request(request)
     city, cat = _norm(req["city"]), _norm(req["category"])
 
@@ -129,15 +144,20 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
     passed.sort(key=lambda p: (p["price_from_kzt"], p["id"]))
     top = passed[:MAX_RESULTS]
     busy = counts["busy_date"]
-    matches = [
-        {
+    availability = {"busy_in_category": busy, "candidates": len(candidates)}
+    matches = []
+    for p in top:
+        facts = build_facts(p, req, [q for q in top if q is not p], availability)
+        explanation, source = _explain(facts, explainer)
+        matches.append({
             "id": p["id"],
             "profile": p,
+            "explanation": explanation,
+            "explanation_source": source,
+            "facts": facts,
             "match_reasons": _match_reasons(p, req, busy, len(candidates)),
             "warnings": _warnings(p),
-        }
-        for p in top
-    ]
+        })
 
     why = "; ".join(f"{REASON_TEXT[k]} — {v}" for k, v in counts.items() if v)
     if not top:
@@ -151,6 +171,9 @@ def find_contractors(request: dict, profiles: list[dict]) -> dict:
     else:
         status = "found"
         message = f"Подобрано {len(top)} из {len(passed)} подходящих (кандидатов в категории: {len(candidates)})."
+    if len(top) == MAX_RESULTS and busy:  # при <3 занятость уже есть в перечне причин
+        d = date.fromisoformat(req["date"]).strftime("%d.%m.%Y")
+        message += f" На {d} заняты {busy} из {len(candidates)}."
 
     return {
         "status": status,
