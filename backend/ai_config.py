@@ -15,7 +15,7 @@ class AIConfig:
     api_key: str = field(default="", repr=False)
     model: str = DEFAULT_MODEL
     enabled: bool = True
-    timeout: float = 5.0
+    timeout: float = 8.0
     valid: bool = True
 
 
@@ -55,7 +55,7 @@ def load_ai_config(*, environ=None, env_file=None):
         enabled = values.get("AIZAK_AI_ENABLED", "true").strip().lower()
         if enabled not in {"true", "false", "1", "0", "yes", "no"}:
             raise ValueError("Invalid configuration")
-        timeout = float(values.get("AIZAK_AI_TIMEOUT_SECONDS", "5"))
+        timeout = float(values.get("AIZAK_AI_TIMEOUT_SECONDS", "8"))
         if not math.isfinite(timeout) or not 0.1 <= timeout <= 8:
             raise ValueError("Invalid configuration")
         return AIConfig(

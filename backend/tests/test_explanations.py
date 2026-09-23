@@ -200,7 +200,7 @@ class ExplanationTests(unittest.TestCase):
             _post_openai({"model": self.config.model}, self.config)
         request = opener.open.call_args.args[0]
         self.assertEqual(request.full_url, OPENAI_URL)
-        self.assertEqual(opener.open.call_args.kwargs["timeout"], 5.0)
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 8.0)
         self.assertEqual(request.get_header("Authorization"), "Bearer test-only-not-a-real-key")
         response.read.assert_called_once_with(65537)
         opener.open.assert_called_once()
