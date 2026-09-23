@@ -1,6 +1,7 @@
-# AIZAK interface
+# Подключение интерфейса AIZAK
 
-Run from the repository root with Python 3.12:
+Это документ frontend-направления. Рабочая точка входа: `ui/app.py`.
+Запуск из корня репозитория:
 
 ```powershell
 python -m pip install -r ui/requirements.txt
@@ -8,30 +9,112 @@ python -m streamlit run ui/app.py
 python -m unittest discover -s ui/tests -v
 ```
 
-The UI currently uses only explicitly fictional records from `ui/mock_data.py`.
-It does not load, alter or impersonate the competition dataset.
+## Основание контракта
 
-The official case text has not yet been supplied. The initial form follows the
-frontend task and the observed contract in `backend/matching.py` and
-`backend/loader.py`, branch `feature/matching`, commit `3220b61`. This is an
-observed implementation, not a claim of an agreed or final API contract.
+- Реализация Алибека: `origin/feature/matching`, коммит `3220b61918be842a3bd91ba5eab63652653dbb40`,
+  `backend/matching.py` и `backend/loader.py`.
+- Командное описание кейса #79-lite: `origin/docs/readme-initial`, коммит `7b0ffdc`.
+  Оригинал официального задания отдельно не предоставлен.
+- Имена полей сверены с реализацией. Личное подтверждение Алибека и решение об
+  объединении веток ещё не получены; этот документ не утверждает обратного.
 
-Request fields: `city`, `category`, `date` (ISO YYYY-MM-DD), `event_type`,
-`budget` (integer KZT), `language` (string or null), `hours` (integer or null).
+## Вход
 
-Response: `matches` (at most 3 objects with `id`, `profile`, `match_reasons`,
-optional `warnings`), `excluded`; optional `status`, `message`, `more_available`.
-Cards currently read `profile.anon_name`, `city`, `categories`, `price_from_kzt`.
+```json
+{
+  "city": "Астана",
+  "category": "Ведущий",
+  "date": "2026-10-11",
+  "event_type": "свадьба",
+  "budget": 200000,
+  "language": null,
+  "hours": null
+}
+```
 
-Before connecting actual results, confirm the final contract, catalogue values
-for cities/categories/formats/languages, and the backend entry point or API URL
-with Alibek. Replace the demo provider at the import/call in `ui/app.py` with an
-adapter. Remove the unconditional demo labels only when an actual data source
-is connected, preserving per-profile synthetic-data warnings. Add handling for
-network failures if an HTTP service is used. Do not silently fall back to mock
-results when a real backend fails.
+Обязательны `city`, `category`, `date`, `event_type`, `budget`.
+Дата передаётся как ISO YYYY-MM-DD, бюджет — целое положительное число в тенге.
+Необязательные `language` и `hours` передаются как значение либо JSON null.
+Значение 0 в поле длительности формы преобразуется в null; положительная длительность
+передаётся целым числом. Форматы и языки имеют канонические строчные значения,
+независимо от заглавной буквы в подписи формы.
 
-Demo examples: Astana / host / 200000 KZT returns three cards; a 1 KZT budget
-returns no results; Almaty / photographer returns one. The date 2030-01-15 is
-marked busy in all fictional profiles. Optional duration above 8 hours excludes
-the corresponding demo profiles.
+`ui/catalog.py` содержит только справочники значений из CSV ветки Алибека, без
+реальных записей подрядчиков. При подключении backend справочники строятся из
+нормализованных профилей через `catalog_from_profiles`.
+
+Окно календаря 23.09.2026–31.12.2026 взято из командного описания кейса.
+Это ограничение frontend; текущий backend сам его не проверяет. Границы
+параметризованы в сервисе и требуют подтверждения владельцем датасета.
+Отсутствие даты в busy_dates за пределами окна не считается доказательством доступности.
+
+## Выход
+
+Обязательная структура совпадает с результатом `find_contractors(request, profiles)`:
+
+- `status`: found, no_category или none_match.
+- `message`: непустая строка с объяснением результата.
+- `matches`: от 0 до 3 объектов с `id`, `profile`, `match_reasons: list[str]`,
+  `warnings: list[str]`.
+- `excluded`: список объектов `id`, `name`, `reasons: list[str]`.
+- `more_available`: неотрицательное целое число.
+- `funnel`: словарь неотрицательных целых счётчиков, в том числе `in_city_category`;
+  для существующей категории также `passed` и ненулевые `rejected_<код>`.
+
+`profile` — нормализованный профиль loader: id, anon_name, city, categories,
+price_from_kzt, event_formats, languages, busy_dates, max_hours, description,
+synthetic, price_imputed, city_imputed. Списки представлены массивами, цена —
+целым числом, признаки происхождения — boolean, max_hours — integer или null.
+Карточки используют id, имя, город, категории, цену и признаки происхождения;
+остальные поля сохраняются без изменения.
+
+`no_category` означает отсутствие категории в городе до фильтрации.
+`none_match` означает, что категория есть, но все кандидаты исключены.
+Причины исключения: busy_date, over_budget, format_mismatch, hours_exceeded,
+language_mismatch. Одна запись может иметь несколько причин, поэтому их количество
+не суммируется как число разных подрядчиков. Неизвестный будущий код отображается
+как «другое условие заказа».
+
+## Адаптер и ошибки
+
+`get_search_service()` сейчас всегда возвращает mock. Реальных HTTP/OpenAI вызовов
+в интерфейсе нет; фиктивные профили хранятся отдельно в `ui/mock_data.py`.
+Их идентификаторы начинаются с demo-, все помечены synthetic=true.
+
+После согласованного объединения backend интегратор может изменить фабрику
+`get_search_service()` в `ui/service.py`, передав готовые зависимости:
+
+```python
+return make_backend_service(find_contractors, load_profiles())
+```
+
+`make_backend_service` передаёт функции точные request и profiles и строит
+справочники из profiles. Сам адаптер не импортирует backend, не читает датасет
+и не выполняет сетевых запросов. Нормализованные профили загружаются интегратором.
+
+Результат проверяется в `ui/contracts.py`. Ошибочная схема, отсутствие обязательных
+полей, дублирующиеся id и более трёх карточек дают сообщение об ошибке.
+Сбой провайдера очищает предыдущую выдачу; внутренние детали не показываются.
+Подмена неудачного настоящего поиска mock-результатами отсутствует.
+Синтетические профили и восстановленные цены/города имеют отдельные предупреждения.
+
+## Проверка без API
+
+Основные тесты проверяют форму, все три исхода, повторный поиск после ошибки,
+некорректный ответ, канонические значения, границы бюджета/календаря, null для
+длительности и происхождение данных.
+
+Для дополнительного сравнения с неизменённым локальным снимком backend:
+
+```powershell
+$env:AIZAK_BACKEND_CONTRACT_FILE = "C:\path\to\backend\matching.py"
+python -m unittest discover -s ui/tests -v
+```
+
+Сравнение использует только явно тестовые DEMO_PROFILES и 11 запросов: одинаковые
+id выбранных кандидатов, исключения, счётчики и структура ответа.
+Без этой переменной дополнительная проверка пропускается, остальные тесты работают.
+
+Примеры mock: Астана / ведущий / свадьба / 11.10.2026 / 200000 ₸ — три карточки;
+тот же запрос с 80000 ₸ — одна; с 1 ₸ — none_match; Флорист — no_category.
+10.10.2026 помечено занятым во всех тестовых профилях.
