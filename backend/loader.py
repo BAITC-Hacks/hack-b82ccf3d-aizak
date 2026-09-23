@@ -1,9 +1,11 @@
 """Загрузка и валидация профилей подрядчиков (CSV или JSONL)."""
 import csv
 import json
+import os
 from datetime import date
 from pathlib import Path
 
+# Путь относительно репозитория, не зависит от машины; переопределяется env AIZAK_DATASET.
 DEFAULT_DATASET = Path(__file__).resolve().parent.parent / "data" / "hackathon-dataset-anonymized.csv"
 
 REQUIRED_FIELDS = (
@@ -61,9 +63,9 @@ def normalize_profile(raw: dict, line_no: int | None = None) -> dict:
     return p
 
 
-def load_profiles(path: str | Path = DEFAULT_DATASET) -> list[dict]:
+def load_profiles(path: str | Path | None = None) -> list[dict]:
     """Читает .jsonl или .csv и возвращает список валидных профилей."""
-    path = Path(path)
+    path = Path(path or os.environ.get("AIZAK_DATASET") or DEFAULT_DATASET)
     if path.suffix == ".jsonl":
         rows = [
             (i, json.loads(line))

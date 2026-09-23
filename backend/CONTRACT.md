@@ -3,10 +3,26 @@
 Изменения контракта — только с уведомлением команды.
 
 ```python
-from loader import load_profiles
-from matching import find_contractors
+# из корня репозитория (или добавив корень в sys.path)
+from backend import find_contractors, load_profiles
 result = find_contractors(request, load_profiles())
 ```
+
+Датасет по умолчанию — `data/hackathon-dataset-anonymized.csv` (путь от репозитория).
+Другой файл (в т.ч. официальный `.jsonl`) — `load_profiles(path)` или env `AIZAK_DATASET`.
+Backend — только стандартная библиотека Python 3.10+, зависимостей нет.
+
+### Подключение в Streamlit (`ui/service.py`)
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # корень репо
+from backend import find_contractors, load_profiles
+
+def get_search_service():
+    return make_backend_service(find_contractors, load_profiles())
+```
+`backend` — пакет, чтобы его модули не конфликтовали с `ui/service.py` и `ui/contracts.py`.
 
 ## request
 | поле | тип | обяз. | пример |
@@ -19,7 +35,7 @@ result = find_contractors(request, load_profiles())
 | hours | int \| null | нет | `6` |
 | language | str \| null | нет | `"казахский"` |
 
-Невалидный запрос → `ValueError` с текстом ошибки.
+`hours` / `language` можно передавать как `None`. Невалидный запрос → `ValueError` с текстом ошибки.
 
 ## response
 ```json
