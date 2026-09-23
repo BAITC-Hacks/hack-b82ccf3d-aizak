@@ -1,4 +1,4 @@
-"""Frontend boundary for Alibek's find_contractors contract at 3220b61."""
+"""Frontend boundary for Alibek's find_contractors contract v1 at 559a322."""
 from datetime import date
 from typing import Literal, TypedDict
 

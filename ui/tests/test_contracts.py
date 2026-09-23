@@ -102,10 +102,14 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(DEMO_PROFILES, before)
 
 
-@unittest.skipUnless(os.environ.get("AIZAK_BACKEND_CONTRACT_FILE"), "Optional read-only backend snapshot not provided")
+BACKEND_CONTRACT_FILE = Path(os.environ.get("AIZAK_BACKEND_CONTRACT_FILE") or
+                             Path(__file__).resolve().parents[2] / "backend" / "matching.py")
+
+
+@unittest.skipUnless(BACKEND_CONTRACT_FILE.is_file(), "Backend not present in standalone UI checkout")
 class BackendCompatibilityTests(unittest.TestCase):
     def test_mock_matches_actual_backend_structure_and_filters_offline(self):
-        spec = importlib.util.spec_from_file_location("aizak_backend_contract", os.environ["AIZAK_BACKEND_CONTRACT_FILE"])
+        spec = importlib.util.spec_from_file_location("aizak_backend_contract", BACKEND_CONTRACT_FILE)
         backend = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(backend)
         for change in (

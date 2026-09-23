@@ -10,10 +10,11 @@ CATEGORIES = (
 )
 EVENT_TYPES = ("свадьба", "той", "корпоратив", "конференция", "юбилей", "день рождения")
 LANGUAGES = ("русский", "казахский", "английский")
-# Team's case summary: docs/readme-initial at 7b0ffdc. Confirm at integration.
+# The live service receives the same bounds from backend.matching.
 CALENDAR_START = date(2026, 9, 23)
 CALENDAR_END = date(2026, 12, 31)
 REASON_LABELS = {
+    "date_outside_calendar": "дата вне календаря занятости, доступность неизвестна",
     "busy_date": "занят на выбранную дату",
     "over_budget": "стартовая цена выше бюджета",
     "format_mismatch": "не подходит формат мероприятия",

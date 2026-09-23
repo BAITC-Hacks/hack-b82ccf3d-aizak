@@ -12,7 +12,14 @@ def format_kzt(value):
 
 
 st.set_page_config(page_title="AIZAK — подбор подрядчиков", page_icon="✦", layout="wide")
-service = get_search_service()
+try:
+    service = get_search_service()
+except BackendError as exc:
+    for key in ("result", "last_request", "search_error", "result_source"):
+        st.session_state.pop(key, None)
+    st.title("AIZAK")
+    st.error(str(exc))
+    st.stop()
 result_source = ("matching-contract-v2", service.is_demo)
 if st.session_state.get("result_source") != result_source:
     for key in ("result", "last_request", "search_error"):

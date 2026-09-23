@@ -17,6 +17,14 @@ from service import SearchService
 
 class InterfaceTests(unittest.TestCase):
     def setUp(self):
+        # Keep the frontend's existing isolated tests explicit about their fixture.
+        # The production factory now uses the official CSV (tested separately).
+        mock_service = patch(
+            "service.get_search_service",
+            return_value=SearchService(search_contractors, demo_catalog(), is_demo=True),
+        )
+        mock_service.start()
+        self.addCleanup(mock_service.stop)
         self.app = AppTest.from_file(str(UI_DIR / "app.py"), default_timeout=20).run()
         self.app.date_input(key="date").set_value(date(2026, 10, 11))
 

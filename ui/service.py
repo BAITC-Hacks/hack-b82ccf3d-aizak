@@ -1,9 +1,11 @@
 """Injectable local provider boundary. No HTTP or OpenAI API calls."""
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
+import sys
 from typing import Callable
 
-from catalog import CALENDAR_END, CALENDAR_START, catalog_from_profiles, demo_catalog
+from catalog import CALENDAR_END, CALENDAR_START, catalog_from_profiles
 from contracts import BackendError, SearchRequest, SearchResult, validate_request, validate_result
 
 
@@ -40,6 +42,21 @@ def make_backend_service(find_contractors, profiles, *, calendar_start=CALENDAR_
 
 
 def get_search_service():
-    """The live UI remains explicitly in demo mode until team integration."""
-    from mock_data import search_contractors
-    return SearchService(search_contractors, demo_catalog(), is_demo=True)
+    """Load the official dataset and use the team's local matching backend."""
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from backend import find_contractors, load_profiles
+    from backend.matching import CALENDAR_END as end, CALENDAR_START as start
+
+    try:
+        profiles = load_profiles()
+    except (OSError, ValueError):
+        raise BackendError(
+            "Не удалось загрузить каталог подрядчиков. Проверьте наличие и формат "
+            "официального датасета; при нестандартном пути задайте AIZAK_DATASET."
+        ) from None
+    return make_backend_service(
+        find_contractors, profiles,
+        calendar_start=date.fromisoformat(start), calendar_end=date.fromisoformat(end),
+    )
